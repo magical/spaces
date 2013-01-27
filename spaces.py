@@ -41,6 +41,15 @@ Syntax
 
     number = DIGIT+
 
+TODO
+----
+
+* indent/dedent instead of { }
+* functions
+* make the REPL understand multiline statements
+* use whitespace to disambiguate operator precedence
+* figure out why python2 doesn't work
+
 """
 
 import operator
