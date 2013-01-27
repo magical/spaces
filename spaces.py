@@ -1,46 +1,63 @@
+#!/usr/bin/python3
+"""spaces - an experimental mini-language which allows spaces in identifiers
+
+Syntax
+------
+
+..
+
+    program = stmt*
+
+    stmt = assignment | ifstmt | whilestmt
+    assignment = name '=' expr '\n'
+    ifstmt = 'if' expr block
+           | 'if' expr block 'else' block
+           | 'if' expr block 'else' ifstmt
+    whilestmt = 'while' expr block
+    block = '{' stmt* '}'
+
+    expr = binexpr
+    binexpr = unexpr
+            | binexpr binop unexpr
+    unexpr = value
+           | unop value
+    value = name | number
+          | '(' expr ')'
+
+    binop = boolop | cmpop | addop | mulop | bitop
+    boolop = '&&' | '||'
+    cmpop = '==' | '!=' | '<' | '>' | '<=' | '>='
+    addop = '+' | '-'
+    mulop = '*' | '/' | '%'
+    bitop = '^' | '&' | '|'
+
+    unop = '!' | '^'
+
+    # precedence:
+    #  boolop < cmpop < addop < mulop
+    #  boolop < cmpop < bitop
+
+    name = LETTER+ ( ' ' LETTER+ )*
+
+    number = DIGIT+
+
 """
 
-body = stmt*
-stmt = assignment | ifstmt | whilestmt
-assignment = name '=' expr '\n'
-ifstmt = 'if' expr block
-       | 'if' expr block 'else' block
-       | 'if' expr block 'else' ifstmt
-whilestmt = 'while' expr block
-block = '{' stmt* '}'
+import operator
 
-expr = binexpr
-
-binexpr = unexpr
-        | binexpr binop unexpr
-unexpr = value
-       | unop value
-value = name | number
-      | '(' expr ')'
-
-binop = boolop | cmpop | addop | mulop | bitop
-boolop = '&&' | '||'
-cmpop = '==' | '!=' | '<' | '>' | '<=' | '>='
-addop = '+' | '-'
-mulop = '*' | '/' | '%'
-bitop = '^' | '&' | '|'
-
-unop = '!' | '^'
-
-# precedence:
-#  boolop < cmpop < addop < mulop
-#  boolop < cmpop < bitop
-
-name = letter+ (' ' letter+)*
-
-number = digit+
-
-"""
-
-punctuation = "!&|^=<>+-*/%~"
+_punctuation = "!&|^=<>+-*/%~"
 
 class SyntaxError(Exception): pass
-class InvalidChar(SyntaxError): pass
+class InvalidChar(SyntaxError):
+    def __str__(self):
+        return "invalid character: %s" % self.args[0]
+class EvalError(Exception): pass
+class RuntimeError(Exception): pass
+
+try:
+    input = raw_input
+except NameError:
+    pass
 
 class Token:
     def __init__(self, type, value=None):
@@ -93,9 +110,9 @@ def tokenize(s):
         elif s[i] in "(){}":
             token = Token(s[i])
             i += 1
-        elif s[i] in punctuation:
+        elif s[i] in _punctuation:
             start = i
-            while s[i] in punctuation:
+            while s[i] in _punctuation:
                 i += 1
             token = Token('op', s[start:i])
         elif s[i] == '\0' and i == len(s) - 1:
@@ -191,7 +208,8 @@ def parse_stmt(tokens, i):
         if tokens[i].type == 'else':
             i += 1
             if tokens[i].type == 'if':
-                alt, i = parse_stmt(tokens, i)
+                stmt, i = parse_stmt(tokens, i)
+                alt = [stmt]
             elif tokens[i].type == '{':
                 alt, i = parse_block(tokens, i)
             else:
@@ -214,8 +232,7 @@ def parse_stmt(tokens, i):
         if tokens[i].type == 'newline':
             i += 1
         return Node('assign', name, expr), i
-    else:
-        raise SyntaxError('unexpected token:', str(t))
+    raise SyntaxError('unexpected token:', str(t))
 
 def parse_block(tokens, i):
     stmts = []
@@ -259,9 +276,9 @@ def parse_binexpr(tokens, i, lowprec, eat_newlines):
     while True:
         if tokens[i].type != 'op':
             break
-        if tokens[i].value not in _binops:
-            raise SyntaxError("unknown operator %s" % op)
         op = tokens[i].value
+        if op not in _binops:
+            raise SyntaxError("unknown operator %s" % op)
         prec = _precedence[op]
         if prec < lowprec:
             break
@@ -278,6 +295,8 @@ def parse_unexpr(tokens, i, eat_newlines):
         op = tokens[i].value
         i += 1
         if op not in _unops:
+            if op in _binops:
+                raise SyntaxError("missing lhs of binary operator %s" % op)
             raise SyntaxError("unknown unary operator %s" % op)
         expr, i = parse_value(tokens, i)
         return Node('unexpr', op, expr), i
@@ -297,7 +316,8 @@ def parse_value(tokens, i):
     elif t.type == 'name':
         return Node('name', t.value), i
     elif t.type == 'number':
-        return Node('number', t.value), i
+        n = int(t.value)
+        return Node('number', n), i
     raise SyntaxError('unexpected %s' % t)
 
 def test_parse():
@@ -328,5 +348,155 @@ def test_parse():
         ['ifelse:<name:a, [], ifelse:<name:b, [], []>>']
     assert p('while a { a = 0 }') == ['while:<name:a, assign:<name:a, number:0>>']
 
-test_tokenize()
-test_parse()
+def eval(body, env=None):
+    if env is None:
+        env = {}
+    eval_body(body, env)
+    return env
+
+def eval_body(body, env):
+    for node in body:
+        eval_stmt(node, env)
+    return
+
+def eval_stmt(node, env):
+    if node.type == 'assign':
+        lhs, rhs = node.args
+        if lhs.type != 'name':
+            raise EvalError("non-name on lhs of assignment: %s", lhs)
+        name = lhs.args[0]
+        value = eval_expr(rhs, env)
+        env[name] = value
+    elif node.type == 'if':
+        cond, then = node.args
+        if eval_expr(cond, env):
+            eval_body(then, env)
+    elif node.type == 'ifelse':
+        cond, then, alt = node.args
+        if eval_expr(cond, env):
+            eval_body(then, env)
+        else:
+            eval_body(alt, env)
+    elif node.type == 'while':
+        cond, body = node.args
+        while eval_expr(cond, env):
+            eval_body(body, env)
+    else:
+        raise EvalError("not a statement: %s" % node)
+    return
+
+_eval_ops = {
+    '==': operator.eq,
+    '!=': operator.ne,
+    '<': operator.lt,
+    '>': operator.gt,
+    '<=': operator.le,
+    '>=': operator.ge,
+
+    '+': operator.add,
+    '-': operator.sub,
+
+    '*': operator.mul,
+    '/': operator.floordiv,
+    '%': operator.mod,
+
+    '&': operator.and_,
+    '|': operator.or_,
+    '^': operator.xor,
+}
+
+def eval_expr(node, env):
+    if node.type == 'name':
+        name = node.args[0]
+        try:
+            return env[name]
+        except KeyError:
+            raise RuntimeError("no such variable: %s" % name)
+    elif node.type == 'number':
+        return node.args[0]
+    elif node.type == 'binexpr':
+        op, lexpr, rexpr = node.args
+        if op == '&&':
+            lval = eval_expr(lexpr, env)
+            if lval:
+                rval = eval_expr(rexpr, env)
+                return rval
+            else:
+                return lval
+        elif op == '||':
+            lval = eval_expr(lexpr, env)
+            if lval:
+                return lval
+            else:
+                rval = eval_expr(rexpr, env)
+                return rval
+        elif op in _eval_ops:
+            f = _eval_ops[op]
+            lval = eval_expr(lexpr, env)
+            rval = eval_expr(rexpr, env)
+            return f(lval, rval)
+        raise EvalError("unknown binary operator: %s" % op)
+    elif node.type == 'unexpr':
+        op, expr = node.args
+        value = eval_expr(expr, env)
+        if op == '!':
+            return int(not value)
+        elif op == '^':
+            return ~value
+        raise EvalError("unknown unary operator: %s" % op)
+    raise EvalError("not an expression: %s" % node)
+
+def test_eval():
+    def e(_e, **env):
+        return eval_expr(parse_expression(tokenize(_e)), env)
+    assert e('1') == 1
+    assert e('a', a=1) == 1
+    assert e('2 + 2') == 4
+    assert e('a + a', a=2) == 4
+    assert e('!a', a=0) == 1
+    assert e('!a', a=100) == 0
+    assert e('1+2*3+4') == 11
+    assert e('a && b', a=1, b=1) == 1
+    assert e('a == 1', a=1) == 1
+    assert e('a != 1', a=1) == 0
+    assert e('a < b < c', a=4, b=5, c=100) == 1
+    #assert e('a < b < c', a=4, b=0, c=100) == 0
+
+    def s(_s, **env):
+        return eval(parse(tokenize(_s)), env)
+    assert s('a = 1')['a'] == 1
+    assert s('a = 2', a=1)['a'] == 2
+    assert s('a = a+1', a=1)['a'] == 2
+    assert s('if a == b { c = 1 } else { c = 2 }', a=1, b=1)['c'] == 1
+    assert s('if a == b { c = 1 } else { c = 2 }', a=1, b=0)['c'] == 2
+    assert s('c = a == b', a=1, b=1)['c'] == 1
+    assert s('while a > 0 { a = a - 1 }', a=100)['a'] == 0
+    assert s('while a > 0 {'
+                'if b > a { t = a\n a = b\n b = t }'
+                'a = a - b'
+             '}', a=65535, b=170)['b'] == 85
+
+def repl():
+    env = {}
+    env['env'] = env
+    while True:
+        print("> ", end="")
+        try:
+            line = input()
+            tokens = tokenize(line)
+            try:
+                val = eval_expr(parse_expression(tokens), env)
+                print(val)
+            except SyntaxError:
+                eval(parse(tokens), env)
+        except EOFError as e:
+            print()
+            break
+        except (SyntaxError, EvalError, RuntimeError) as e:
+            print(e)
+
+if __name__ == '__main__':
+    test_tokenize()
+    test_parse()
+    test_eval()
+    repl()
