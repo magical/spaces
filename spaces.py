@@ -48,10 +48,10 @@ TODO
 * functions
 * make the REPL understand multiline statements
 * use whitespace to disambiguate operator precedence
-* figure out why python2 doesn't work
 
 """
 
+from __future__ import print_function
 import operator
 
 _punctuation = "!&|^=<>+-*/%~"
@@ -68,16 +68,22 @@ try:
 except NameError:
     pass
 
+__metaclass__ = type
+
 class Token:
     def __init__(self, type, value=None):
         self.type = type
         self.value = value
     def __eq__(self, other):
         return self.type == other.type and self.value == other.value
+    def __ne__(self, other):
+        return not self.__eq__(other)
     def __str__(self):
         if self.value is not None:
-            return '%s: %s' % (self.type, self.value)
+            return '%s:%s' % (self.type, self.value)
         return self.type
+    def __repr__(self):
+        return "Token(%r, %r)" % (self.type, self.value)
 
 def tokenize(s):
     # I hate checking if we're past the end of the input all the time, so lets
