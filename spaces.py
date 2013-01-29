@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python
 """spaces - an experimental mini-language which allows spaces in identifiers
 
 Syntax
